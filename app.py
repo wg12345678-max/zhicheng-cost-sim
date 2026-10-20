@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
 """
-智控成本 · 数创价值
-——制造企业全流程成本管理虚拟仿真决策实训（Streamlit 演示版）
+智控成本 · 数创价值 —— 制造企业全流程成本管理虚拟仿真实训（交互版）
 依据：西南财经大学天府学院《成本管理会计 ACT1415A》课程组
-      2026 中国仿真创新应用大赛 · 仿真教学应用赛道设计方案 V4.0
+      2026 中国仿真创新应用大赛 设计方案 V4.0
+核心：按步骤做决策，每一步实时刷新「单位成本 / 经营利润 / 成本偏离指数 / 责任绩效分」四项指标（算账闭环）
 """
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.graph_objects as go
+import random
 
 st.set_page_config(
     page_title="智控成本 · 数创价值 | 成本管理虚拟仿真",
@@ -16,61 +16,38 @@ st.set_page_config(
     layout="wide",
 )
 
-# ---------------- 样式 ----------------
-st.markdown(
-    """
-<style>
-    .block-container {padding-top: 1.2rem;}
-    .indicator-card {background:#0e2a47;border-radius:12px;padding:16px 14px;color:#fff;}
-    .indicator-card .label{color:#9fc1e3;font-size:0.82rem;}
-    .indicator-card .value{font-size:1.55rem;font-weight:700;}
-    .indicator-card .sub{color:#7fb3e8;font-size:0.78rem;}
-    .section-title {color:#0e2a47;border-left:5px solid #1f6feb;padding-left:10px;margin:18px 0 8px;}
-</style>
-""",
-    unsafe_allow_html=True,
-)
-
-# ---------------- 算账引擎 ----------------
+# ============================ 算账引擎 ============================
 QUALITY = {"低劣": 0.85, "合格": 1.0, "优质": 1.08}
-
-DEFAULT = {
-    "mat_price": 12.0, "mat_qty": 5000, "quality": "合格",
-    "hours": 2000, "wage": 25.0, "mfg": 45000.0,
-    "finished": 300, "wip": 100,
-    "mat_done": 100, "proc_done": 50,
-    "price": 600.0, "standard": 421.0,
+SUPPLIERS = {
+    "S1 本地供应商": {"price": 11.0, "quality": "合格", "tag": "价格适中 · 交期快"},
+    "S2 进口优质料": {"price": 14.0, "quality": "优质", "tag": "质量优 · 交期长 · 价格高"},
+    "S3 低价料":     {"price": 8.0,  "quality": "低劣", "tag": "价格低 · 质量差（易返工）"},
 }
+TRAIN_MODE = {"一次投入": 1.0, "分工序分次投入": 0.5}
 
 
-def compute(mat_price, mat_qty, quality, hours, wage, mfg,
-            finished, wip, mat_done, proc_done, price, standard):
-    """实现方案 3.3 节核心计算公式，返回全部指标。"""
-    material_total = mat_price * mat_qty * QUALITY[quality]
-    labor_total = hours * wage
-    processing_total = labor_total + mfg          # 加工成本总额 = 人工 + 制造费用
-
-    mat_done, proc_done = mat_done / 100.0, proc_done / 100.0
-    mat_eq = wip * mat_done                        # 材料约当产量
-    proc_eq = wip * proc_done                      # 加工约当产量
-
-    mat_unit = material_total / (finished + mat_eq)      # 材料单位成本
-    proc_unit = processing_total / (finished + proc_eq)  # 加工单位成本
-    unit_cost = mat_unit + proc_unit                     # 单位产品成本
-
-    finished_cost = finished * unit_cost           # 完工产品成本
-    wip_cost = mat_eq * mat_unit + proc_eq * proc_unit   # 月末在产品成本
-
-    revenue = price * finished                     # 销售收入
-    profit = revenue - finished_cost               # 经营利润
-
-    deviation = (unit_cost / standard * 100.0) if standard > 0 else 0.0   # 成本偏离指数
-    perf = 95 - abs(deviation - 100) * 2           # 责任绩效分（0-100）
-
+def compute(state):
+    """由决策状态实时计算四指标（方案 3.3 节公式）。"""
+    material_total = state["mat_price"] * state["mat_qty"] * QUALITY[state["quality"]]
+    labor_total = state["labor_hours"] * state["wage"]
+    processing_total = labor_total + state["mfg_total"]
+    mat_done = state["material_done"]          # 投料方式决定的材料完工程度
+    proc_done = state["proc_done"]             # 加工完工程度
+    mat_eq = state["wip"] * mat_done
+    proc_eq = state["wip"] * proc_done
+    mat_unit = material_total / (state["finished"] + mat_eq) if (state["finished"] + mat_eq) > 0 else 0
+    proc_unit = processing_total / (state["finished"] + proc_eq) if (state["finished"] + proc_eq) > 0 else 0
+    unit_cost = mat_unit + proc_unit
+    finished_cost = state["finished"] * unit_cost
+    wip_cost = mat_eq * mat_unit + proc_eq * proc_unit
+    revenue = state["price"] * state["finished"]
+    profit = revenue - finished_cost
+    std = state["standard_cost"] if state["standard_cost"] > 0 else unit_cost
+    deviation = unit_cost / std * 100.0
+    perf = max(0.0, 95 - abs(deviation - 100) * 2)
     return {
         "material_total": material_total, "labor_total": labor_total,
-        "processing_total": processing_total,
-        "mat_eq": mat_eq, "proc_eq": proc_eq,
+        "processing_total": processing_total, "mat_eq": mat_eq, "proc_eq": proc_eq,
         "mat_unit": mat_unit, "proc_unit": proc_unit, "unit_cost": unit_cost,
         "finished_cost": finished_cost, "wip_cost": wip_cost,
         "revenue": revenue, "profit": profit,
@@ -81,382 +58,387 @@ def compute(mat_price, mat_qty, quality, hours, wage, mfg,
 
 def deviation_color(d):
     if d <= 95: return "蓝 · 成本偏低"
-    if d <= 105: return "绿 · 正常区间"
+    if d <= 105: return "绿 · 正常"
     if d <= 115: return "黄 · 成本偏高"
     return "红 · 严重偏高"
 
 
-# ---------------- 侧边栏导航 ----------------
-PAGES = [
-    "作品概览", "算账引擎 · 交互演示", "标准例题验算",
-    "28 步实验流程", "红线机制与风险事件", "参数边界测试",
-    "判断标准自检", "参考文献与附录",
+# ============================ 步骤定义 ============================
+STEPS = [
+    (1, "A", "开局签约", "设定目标利润率，确定售价与经营目标"),
+    (2, "A", "材料采购", "选择供应商（价格 / 质量 / 交期权衡）"),
+    (3, "A", "材料入库", "设定材料单价与采购数量"),
+    (4, "A", "生产领料", "选择投料方式（决定在产品材料完工程度）"),
+    (5, "A", "人工投入", "设定工时与工资率"),
+    (6, "A", "制造费用", "选择分摊基数并设定制造费用总额"),
+    (7, "A", "约当产量", "设定完工/在产品数量与加工完工程度"),
+    (8, "A", "品种法核算", "归集要素费用，计算完工与在产品成本"),
+    (9, "B", "量本利分析", "调整售价与销量，测算保本点与经营利润"),
+    (10, "B", "产销情境", "选择产销情境，观察存货吸收固定成本"),
+    (11, "B", "标准成本", "设定标准料工费，诊断成本偏离指数"),
+    (12, "B", "责任中心", "划分责任中心，落实责任绩效分"),
+    (13, "C", "降本金点子", "提交降本增效方案，AI/规则评分"),
+    (14, "C", "风险事件", "应对随机风险事件，做出经营决策"),
+    (15, "C", "红线检查", "系统检测成本造假 / 虚增存货 / 责任甩锅"),
+    (16, "C", "经营决策", "出具定价 / 排产 / 考核建议书与终评分"),
 ]
-st.sidebar.markdown("## 🧮 智控成本 · 数创价值")
-st.sidebar.caption("制造企业全流程成本管理虚拟仿真决策实训")
-page = st.sidebar.radio("选择板块", PAGES)
-
-st.sidebar.markdown("---")
-st.sidebar.caption("西南财经大学天府学院《成本管理会计 ACT1415A》课程组 · 2026")
+TOTAL_STEPS = len(STEPS)
+MODULE_NAMES = {"A": "成本核算基本功", "B": "两法对比与决策", "C": "作业责任与降本"}
 
 
-# ============================================================
-# 板块 1 · 作品概览
-# ============================================================
-if page == PAGES[0]:
-    st.title("智控成本 · 数创价值")
-    st.caption("—— 制造企业全流程成本管理虚拟仿真决策实训（设计方案 V4.0 演示）")
-    st.markdown("**2026 中国仿真创新应用大赛 · 仿真教学应用赛道 · 虚拟仿真实验设计方向（高教文科·经济管理类）**")
-
-    c1, c2, c3 = st.columns(3)
-    c1.metric("课程锚点", "《成本管理会计 ACT1415A》", "应用型本科 · 会计学")
-    c2.metric("实验步数", "28 步", "模块 A / B / C")
-    c3.metric("提交截止", "2026-10-22 20:00", "主办：中国仿真学会")
-
-    st.markdown("### 作品定位")
-    st.markdown(
-        "面向应用型本科会计学《成本管理会计》课程，针对**「方法抽象、数据割裂、核算与决策脱节」**三大教学痛点，"
-        "构建参数化、可交互的制造企业成本管理虚拟仿真实验。学生以**成本会计→车间核算员→财务经理→管理会计师**四种身份，"
-        "沉浸式完成从材料采购到经营决策的全流程成本管理任务。"
-    )
-    st.markdown("核心设计理念为 **「算账闭环」**：每一步操作后，实时刷新**单位产品成本、经营利润、成本偏离指数、责任绩效分**四大核心指标。")
-
-    st.markdown("### 四层系统架构")
-    arch = pd.DataFrame({
-        "层级": ["入口层", "仿真层", "核心服务层", "数据与 AI 层"],
-        "组成模块": [
-            "学生端 Web/移动端、教师端管理后台、超星/LMS 对接",
-            "模块A 成本核算基本功 / 模块B 两法对比与决策 / 模块C 作业责任与降本",
-            "算账引擎、流程引擎、交互控件库、红线检测与风险事件池",
-            "算账模型、ECharts 可视化、规则引擎 AI 降级、LocalStorage 离线存储",
-        ],
-        "职责": [
-            "多端访问与教学管理",
-            "28 步交互式仿真实验",
-            "业务逻辑与状态管理",
-            "数据计算与智能评判",
-        ],
-    })
-    st.dataframe(arch, width="stretch", hide_index=True)
-
-    st.markdown("### 技术选型")
-    tech = pd.DataFrame({
-        "层次": ["前端框架", "流程图", "数据可视化", "状态持久化", "AI 能力", "运行环境"],
-        "技术": ["Vue 3 + Element Plus", "Vue Flow", "ECharts", "LocalStorage + IndexedDB",
-                 "讯飞星火 API + 本地规则引擎降级", "纯前端 · 无后端依赖"],
-        "选型理由": [
-            "卡片、滑块、拖拽等交互控件组件成熟，开发效率高",
-            "支持节点高亮与流程状态可视化",
-            "饼图、折线图、热力图、雷达图齐全",
-            "离线可用，无需服务器，刷新不丢数据",
-            "单模型接入，规则引擎兜底保证流程不中断",
-            "零部署成本，浏览器直接运行",
-        ],
-    })
-    st.dataframe(tech, width="stretch", hide_index=True)
-
-# ============================================================
-# 板块 2 · 算账引擎 · 交互演示
-# ============================================================
-elif page == PAGES[1]:
-    st.title("算账引擎 · 交互演示")
-    st.markdown(
-        "拖动下方参数，实时观察四大核心指标变化。此页直接实现方案 **3.3 节核心计算公式**，"
-        "与「标准例题验算」「参数边界测试」使用同一套引擎逻辑。"
-    )
-
-    st.markdown("#### ① 要素参数")
-    c1, c2, c3, c4 = st.columns(4)
-    mat_price = c1.slider("材料单价（元/kg）", 5, 20, 12)
-    mat_qty = c2.slider("采购量（kg）", 1000, 10000, 5000, step=100)
-    quality = c3.selectbox("材料质量系数", ["低劣(0.85)", "合格(1.00)", "优质(1.08)"])
-    hours = c4.slider("工时（h）", 1000, 6000, 2000, step=100)
-
-    c1, c2, c3 = st.columns(3)
-    wage = c1.slider("工资率（元/h）", 15, 35, 25)
-    mfg = c2.slider("制造费用总额（元）", 20000, 120000, 45000, step=1000)
-    price = c3.slider("产品售价（元/件）", 200, 1000, 600, step=10)
-
-    st.markdown("#### ② 产量与完工程度")
-    c1, c2, c3, c4 = st.columns(4)
-    finished = c1.slider("完工产品数量", 0, 600, 300, step=10)
-    wip = c2.slider("月末在产品数量", 0, 400, 100, step=10)
-    mat_done = c3.slider("材料完工程度（%）", 0, 100, 100)
-    proc_done = c4.slider("加工完工程度（%）", 0, 100, 50)
-
-    st.markdown("#### ③ 评判基准")
-    standard = st.slider("标准成本（元/件）—— 用于成本偏离指数与责任绩效分", 200, 800, 421)
-
-    r = compute(mat_price, mat_qty, quality.split("(")[0], hours, wage, mfg,
-                finished, wip, mat_done, proc_done, price, standard)
-
-    st.markdown("#### ④ 四大核心指标（实时刷新）")
-    dcol = deviation_color(r["deviation"])
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("单位产品成本", f"¥{r['unit_cost']:.2f}")
-    m2.metric("经营利润", f"¥{r['profit']:,.0f}",
-              delta=f"{r['revenue']:,.0f} − {r['finished_cost']:,.0f}")
-    m3.metric("成本偏离指数", f"{r['deviation']:.1f}%",
-              delta=dcol, delta_color="off")
-    m4.metric("责任绩效分", f"{r['perf']:.0f} / 100")
-
-    with st.expander("查看完整算账过程（约当产量 → 单位成本 → 在产品成本）"):
-        detail = pd.DataFrame({
-            "项目": ["直接材料总额", "加工成本总额（人工+制造费用）", "材料约当产量", "加工约当产量",
-                    "材料单位成本", "加工单位成本", "单位产品成本", "完工产品成本", "月末在产品成本", "成本合计"],
-            "计算式": [
-                f"{mat_price} × {mat_qty} × {QUALITY[quality.split('(')[0]]}",
-                f"{hours}×{wage} + {mfg}",
-                f"{wip} × {mat_done}%", f"{wip} × {proc_done}%",
-                f"{r['material_total']:,.0f} / ({finished}+{r['mat_eq']:.0f})",
-                f"{r['processing_total']:,.0f} / ({finished}+{r['proc_eq']:.0f})",
-                f"{r['mat_unit']:.2f} + {r['proc_unit']:.2f}",
-                f"{finished} × {r['unit_cost']:.2f}",
-                f"{r['mat_eq']:.0f}×{r['mat_unit']:.2f} + {r['proc_eq']:.0f}×{r['proc_unit']:.2f}",
-                f"{r['finished_cost']:,.2f} + {r['wip_cost']:,.2f}",
-            ],
-            "金额": [
-                f"¥{r['material_total']:,.2f}", f"¥{r['processing_total']:,.2f}",
-                f"{r['mat_eq']:.0f} 件", f"{r['proc_eq']:.0f} 件",
-                f"¥{r['mat_unit']:.2f}", f"¥{r['proc_unit']:.2f}",
-                f"¥{r['unit_cost']:.2f}", f"¥{r['finished_cost']:,.2f}",
-                f"¥{r['wip_cost']:,.2f}", f"¥{r['total_cost']:,.2f}",
-            ],
-        })
-        st.dataframe(detail, width="stretch", hide_index=True)
-
-    st.markdown("#### 成本构成与单位成本对比")
-    c1, c2 = st.columns(2)
-    with c1:
-        pie = go.Figure(go.Pie(
-            labels=["直接材料", "直接人工", "制造费用"],
-            values=[r["material_total"], r["labor_total"], mfg],
-            hole=0.4, marker=dict(colors=["#1f6feb", "#f59f00", "#12b886"]),
-        ))
-        pie.update_layout(title="要素费用构成", margin=dict(t=40, b=0, l=0, r=0))
-        st.plotly_chart(pie, width="stretch")
-    with c2:
-        bar = go.Figure(go.Bar(
-            x=["实际单位成本", "标准成本"],
-            y=[r["unit_cost"], standard],
-            text=[f"¥{r['unit_cost']:.2f}", f"¥{standard:.0f}"],
-            textposition="outside",
-            marker_color=["#1f6feb", "#868e96"],
-        ))
-        bar.update_layout(title="单位成本 vs 标准成本", yaxis_title="元/件",
-                          margin=dict(t=40, b=0, l=0, r=0))
-        st.plotly_chart(bar, width="stretch")
-
-    st.info("提示：责任绩效分 = 95 − (|偏离指数 − 100|) × 2，低于 95 分即进入「成本偏高/偏低」考核区间，与红线机制联动。")
-
-# ============================================================
-# 板块 3 · 标准例题验算
-# ============================================================
-elif page == PAGES[2]:
-    st.title("标准例题 · 手工验算")
-    st.markdown(
-        "采用《成本管理会计》教材典型例题验证引擎正确性：**某企业生产 A 产品，本月完工 300 件，月末在产品 100 件；"
-        "原材料生产开始时一次投入，月末在产品完工程度 50%；要素费用合计：材料 60000 元、人工 50000 元、制造费用 45000 元。**"
-    )
-    st.markdown("默认参数下引擎计算结果：")
-
-    r = compute(12, 5000, "合格", 2000, 25, 45000, 300, 100, 100, 50, 600, 421)
-    calc = pd.DataFrame({
-        "计算项": ["材料约当产量", "加工约当产量", "材料单位成本", "加工单位成本",
-                  "单位产品成本", "完工产品成本", "月末在产品成本", "合计"],
-        "过程": ["100 × 1.0", "100 × 0.5", "60000 / (300+100)", "95000 / (300+50)",
-                "150.00 + 271.43", "300 × 421.43", "150×100 + 271.43×50", "126428.57 + 28571.43"],
-        "引擎结果": [f"{r['mat_eq']:.0f} 件", f"{r['proc_eq']:.0f} 件",
-                  f"¥{r['mat_unit']:.2f}", f"¥{r['proc_unit']:.2f}",
-                  f"¥{r['unit_cost']:.2f}", f"¥{r['finished_cost']:,.2f}",
-                  f"¥{r['wip_cost']:,.2f}", f"¥{r['total_cost']:,.2f}"],
-    })
-    st.dataframe(calc, width="stretch", hide_index=True)
-
-    ok = abs(r["total_cost"] - (60000 + 50000 + 45000)) < 0.01
-    if ok:
-        st.success(f"✅ 成本合计 ¥{r['total_cost']:,.2f} 与要素费用合计 155000 元完全相等，分配逻辑正确（已验证）。")
-    else:
-        st.warning("注意：当前参数已偏离标准例题，请复位默认参数核对。")
-
-# ============================================================
-# 板块 4 · 28 步实验流程
-# ============================================================
-elif page == PAGES[3]:
-    st.title("28 步实验流程")
-    st.markdown("学生以「成本会计→车间核算员→财务经理→管理会计师」身份，跑通 **材料采购—领料—费用归集—产品核算—两法对比—标准/作业/责任成本—经营决策** 全链路。")
-
-    mod_a = pd.DataFrame({
-        "步": list(range(1, 11)), "场景": ["开局签约", "采购", "入库", "领料", "人工",
-                                        "混合成本分解", "制造费用", "辅助生产分配", "约当产量", "品种法"],
-        "学生动作": ["设目标利润率", "选供应商（价格/交期/质量）", "设材料单价与采购量", "选投料方式",
-                    "设工时与工资率", "高低点法/回归分析法分解", "选分摊基数", "拖拽数据到对应车间",
-                    "设完工程度", "填单品种成本计算单"],
-        "交互类型": ["滑块+卡片", "卡片", "滑块", "卡片", "滑块", "滑块+图表", "卡片", "拖拽", "滑块", "输入+比对"],
-        "算账影响": ["初始化目标利润", "材料单价、返工成本", "直接材料成本", "在产品成本", "直接人工",
-                    "固定/变动成本拆分", "制造费用分摊", "辅助车间费用", "完工/在产成本", "单位成本"],
-    })
-    st.markdown("#### 模块 A · 成本核算基本功（1-10 步 · 1 课时）")
-    st.dataframe(mod_a, width="stretch", hide_index=True)
-
-    mod_b = pd.DataFrame({
-        "步": list(range(11, 19)), "场景": ["分批法", "分步法", "两法切换", "量本利", "产销情境", "存货计价", "标准成本", "差异分析"],
-        "学生动作": ["按 2 个订单算批次成本", "逐步结转+成本还原", "选变动/完全成本法", "调单价/销量/变动成本率",
-                    "产销平衡/存货增加/销售下滑", "先进先出/加权平均/个别计价", "设料工费标准", "拆价格差/用量差/效率差"],
-        "交互类型": ["输入+卡片", "输入+计算器", "卡片", "滑块", "卡片", "卡片", "滑块", "卡片"],
-        "算账影响": ["批次毛利", "最终单位成本", "存货吸收固定成本", "保本点、经营利润", "利润差", "存货价值、利润", "成本偏离指数", "责任中心超支"],
-    })
-    st.markdown("#### 模块 B · 两法对比与决策（11-18 步 · 1 课时）")
-    st.dataframe(mod_b, width="stretch", hide_index=True)
-
-    mod_c = pd.DataFrame({
-        "步": list(range(19, 29)), "场景": ["金点子", "作业成本法", "动因博弈", "责任中心", "数据仪表盘",
-                                        "风险事件", "红线检查", "同口径复盘", "能力画像", "经营决策"],
-        "学生动作": ["写“降本增效方案”", "选资源动因/作业动因", "AI提示动因弱相关是否改", "划成本/利润中心绩效",
-                    "查看成本饼图/利润折线/热力图", "随机触发 5 种之一", "虚增存货/成本造假/责任甩锅",
-                    "看上轮 vs 本轮对比", "生成五维雷达图并截图", "出定价/排产/考核建议书"],
-        "交互类型": ["输入框+AI判分", "卡片", "卡片+输入", "卡片", "可视化看板", "卡片", "系统判定", "复盘表", "自动生成", "输出报告"],
-        "算账影响": ["创新分", "间接费用重摊", "核算精度vs短期利润", "责任绩效分", "无操作只看", "风险损失", "触红线=失败", "改进建议", "终结性评分", "终结性评分"],
-    })
-    st.markdown("#### 模块 C · 作业责任与降本（19-28 步 · 1 课时）")
-    st.dataframe(mod_c, width="stretch", hide_index=True)
-
-    st.markdown("**全局体验设计**：顶部导航 28 步缩略流程（✅已完成/➡️当前/⬜未开始）；右侧悬浮面板实时显示四指标；每完成 5 步里程碑鼓励；"
-                "每轮 3 次「悔棋」机会；8 个核心术语配「一句话解释+真实案例+具体样例」小白化词条。")
-
-# ============================================================
-# 板块 5 · 红线机制与风险事件
-# ============================================================
-elif page == PAGES[4]:
-    st.title("红线机制与风险事件")
-    st.markdown(
-        "红线机制是实验的**「代价感」设计**：第一次触碰红线 → 警告并扣 30 分、允许重做该步骤；"
-        "第二次触碰同一红线 → **实验直接终止**（两次触发制，已通过代码验证）。"
-    )
-    redline = pd.DataFrame({
-        "红线": ["① 成本造假", "② 虚增存货", "③ 责任甩锅"],
-        "触发条件": ["材料单价 > 20 元", "在产品 > 完工品 × 2", "责任中心划分全推他人"],
-        "第一次": ["警告 + 扣 30 分", "警告 + 扣 30 分", "警告 + 扣 30 分"],
-        "第二次": ["实验终止", "实验终止", "实验终止"],
-    })
-    st.dataframe(redline, width="stretch", hide_index=True)
-
-    st.markdown("### 风险事件池（随机触发 5 类，均配二次确认弹窗）")
-    events = pd.DataFrame({
-        "风险事件": ["原材料涨价 20%", "紧急订单插单", "设备突发故障", "质检发现批量不合格品", "客户要求降价 10%"],
-        "影响": ["材料成本上升", "产能与交期冲击", "产能下降 30%", "返工/废品成本", "收入与利润承压"],
-        "决策点": ["是否更换供应商/调整采购量", "是否接单/如何排产", "如何调度产能", "返工还是报废", "是否接受降价/如何降本"],
-    })
-    st.dataframe(events, width="stretch", hide_index=True)
-
-    with st.expander("AI 能力层与降级方案"):
-        ai = pd.DataFrame({
-            "节点": ["① 金点子判定", "② 提分建议"],
-            "触发条件": ["学生提交降本方案文本", "每步操作后"],
-            "输入": ["方案文本", "四因子变化"],
-            "输出": ["0-100 分 + 评语", "改进建议"],
-            "判定维度与权重": ["创新性30% + 可操作性30% + 成本影响25% + 业财融合15%",
-                          "基于单位成本/利润/偏离度/绩效分变化生成，非通用套话"],
-        })
-        st.dataframe(ai, width="stretch", hide_index=True)
-        st.markdown(
-            "AI **仅在两个节点介入**（只评判与建议、不替学生决策）。降级方案：健康检测每 30 秒心跳、接口超时 5 秒自动切换。"
-            "路径一为讯飞星火 API 正常判定；路径二为本地规则引擎（关键词匹配+公式计算）；路径三为预设评语库。均已实装验证。"
-        )
-
-# ============================================================
-# 板块 6 · 参数边界测试
-# ============================================================
-elif page == PAGES[5]:
-    st.title("参数边界测试（7/7 通过）")
-    st.markdown("对算账引擎在 7 类极端输入场景下进行边界测试，**全部通过，无崩溃、无溢出、无逻辑异常**。")
-    bt = pd.DataFrame({
-        "用例": ["TC-A-01", "TC-A-02", "TC-A-03", "TC-A-04", "TC-A-05", "TC-A-06", "TC-A-07"],
-        "输入场景": ["正常（300/100/1.0/0.5）", "零在产品", "全部在产品", "完工100%", "完工0%",
-                    "极小采购（价5量1000）", "极大采购（价20量10000）"],
-        "单位成本": ["467.86", "566.67", "2900", "425", "525", "112.5", "1442.86"],
-        "利润": ["39642.86", "10000", "0", "52500", "22500", "146250", "-252857"],
-        "偏离指数": ["104.0% 绿", "125.9% 红", "644% 红", "94.4% 蓝", "116.7% 红", "25% 蓝", "320% 红"],
-        "结果": ["✓", "✓", "✓", "✓", "✓", "✓", "✓"],
-    })
-    st.dataframe(bt, width="stretch", hide_index=True)
-
-    st.markdown("#### 现场复算：将当前参数一键载入，验证引擎在极端输入下不崩溃")
-    cases = {
-        "正常（300/100）": dict(mat_price=12, mat_qty=5000, quality="合格", hours=2000, wage=25,
-                                mfg=45000, finished=300, wip=100, mat_done=100, proc_done=50, price=600, standard=450),
-        "零在产品": dict(mat_price=12, mat_qty=5000, quality="合格", hours=2000, wage=25,
-                         mfg=45000, finished=300, wip=0, mat_done=100, proc_done=50, price=600, standard=450),
-        "全部在产品（完工0）": dict(mat_price=12, mat_qty=5000, quality="合格", hours=2000, wage=25,
-                                mfg=45000, finished=0, wip=300, mat_done=100, proc_done=50, price=600, standard=450),
-        "极小采购（价5量1000）": dict(mat_price=5, mat_qty=1000, quality="合格", hours=2000, wage=25,
-                                mfg=45000, finished=300, wip=100, mat_done=100, proc_done=50, price=600, standard=450),
-        "极大采购（价20量10000）": dict(mat_price=20, mat_qty=10000, quality="合格", hours=2000, wage=25,
-                                mfg=45000, finished=300, wip=100, mat_done=100, proc_done=50, price=600, standard=450),
+def default_state():
+    return {
+        "mat_price": 12.0, "mat_qty": 5000, "quality": "合格", "supplier": None,
+        "labor_hours": 2000, "wage": 25.0,
+        "mfg_total": 45000.0, "mfg_base": "人工工时",
+        "material_done": 1.0, "proc_done": 0.5,
+        "finished": 300, "wip": 100,
+        "price": 600.0, "standard_cost": 421.0,
+        "target_rate": 0.15,
+        "scenario": "产销平衡",
+        "responsibility": "合理划分",
+        "risk": None, "risk_loss": 0.0,
+        "suggestion": "", "idea_score": None,
+        "resp_penalty": 0.0, "perf_adj": 0.0,
+        "redlines": {"成本造假": 0, "虚增存货": 0, "责任甩锅": 0},
+        "events": [],
+        "notes": {},
     }
-    sel = st.radio("选择边界用例", list(cases.keys()), horizontal=True)
-    p = cases[sel]
-    rr = compute(p["mat_price"], p["mat_qty"], p["quality"], p["hours"], p["wage"], p["mfg"],
-                 p["finished"], p["wip"], p["mat_done"], p["proc_done"], p["price"], p["standard"])
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("单位产品成本", f"¥{rr['unit_cost']:.2f}")
-    m2.metric("经营利润", f"¥{rr['profit']:,.2f}")
-    m3.metric("成本偏离指数", f"{rr['deviation']:.1f}%", delta=deviation_color(rr["deviation"]), delta_color="off")
-    m4.metric("责任绩效分", f"{rr['perf']:.0f}")
-    st.success("引擎在极端输入下正常返回结果，未出现崩溃/溢出/逻辑异常。")
 
-# ============================================================
-# 板块 7 · 判断标准自检
-# ============================================================
-elif page == PAGES[6]:
-    st.title("判断标准自检（17 条）")
-    chk = pd.DataFrame({
-        "#": list(range(1, 18)),
-        "判据": ["算账闭环（每步刷新四指标）", "学生是决策者（非旁观者）", "20-30 步（28 步模块化）",
-                "红线机制（3 条·两次触发制）", "卡片式交互（下拉菜单=0）", "滑块（7 处）",
-                "小白化词条（覆盖 8 个术语）", "同口径复盘（步 26）", "风险事件≥3（5 个）",
-                "AI 只评判不给答案", "AI 降级方案（规则引擎已实装）", "参考文献≥5（6 条）",
-                "材料齐全（视频+PPT 待做）", "截止时间确认（10-22 20:00）", "工程量可交付（11.5 人日）",
-                "参数边界测试（7/7 通过）", "教学验证数据（验证方案已附）"],
-        "结果": ["✓", "✓", "✓", "✓", "✓", "✓", "✓", "✓", "✓", "✓", "✓", "✓", "△", "✓", "✓", "✓", "✓"],
+
+# 初始化会话状态
+if "step" not in st.session_state:
+    st.session_state.step = 1
+    st.session_state.state = default_state()
+    st.session_state.done = []
+    st.session_state.finished = False
+
+
+# ============================ 顶部：四指标面板（算账闭环） ============================
+st.markdown("## 🧮 智控成本 · 数创价值")
+st.caption("制造企业全流程成本管理虚拟仿真决策实训 · 按步骤操作，每一步实时刷新四大指标")
+
+r = compute(st.session_state.state)
+c1, c2, c3, c4 = st.columns(4)
+c1.metric("单位产品成本", f"¥{r['unit_cost']:.2f}")
+c2.metric("经营利润", f"¥{r['profit']:,.0f}")
+c3.metric("成本偏离指数", f"{r['deviation']:.1f}%", delta=deviation_color(r["deviation"]), delta_color="off")
+c4.metric("责任绩效分", f"{r['perf']:.0f} / 100")
+
+
+# ============================ 侧边栏：步骤导航 ============================
+with st.sidebar:
+    st.markdown("### 实验流程")
+    prog = len(st.session_state.done) / TOTAL_STEPS
+    st.progress(prog, text=f"完成 {len(st.session_state.done)} / {TOTAL_STEPS} 步")
+    for mod in ["A", "B", "C"]:
+        st.markdown(f"**模块 {mod} · {MODULE_NAMES[mod]}**")
+        for num, m, name, _ in STEPS:
+            if m != mod:
+                continue
+            if num in st.session_state.done:
+                st.markdown(f"&nbsp;&nbsp;✅ 第{num}步 · {name}")
+            elif num == st.session_state.step:
+                st.markdown(f"&nbsp;&nbsp;➡️ **第{num}步 · {name}（当前）**")
+            else:
+                st.markdown(f"&nbsp;&nbsp;⬜ 第{num}步 · {name}")
+    if st.session_state.step > 1 and st.button("⬅ 返回上一步"):
+        st.session_state.step -= 1
+        st.rerun()
+
+
+# ============================ 步骤渲染 ============================
+def indicator_delta(before, after):
+    return (f"单位成本 {before['unit_cost']:.2f}→{after['unit_cost']:.2f}；"
+            f"利润 {before['profit']:,.0f}→{after['profit']:,.0f}；"
+            f"偏离 {before['deviation']:.1f}%→{after['deviation']:.1f}%；"
+            f"绩效 {before['perf']:.0f}→{after['perf']:.0f}")
+
+
+def commit(delta_msg):
+    st.session_state.done.append(st.session_state.step)
+    st.session_state.state["notes"][st.session_state.step] = delta_msg
+    st.session_state.step += 1
+    st.success(delta_msg)
+    st.rerun()
+
+
+current = st.session_state.step
+
+# ---------- 步骤 1 · 开局签约 ----------
+if current == 1:
+    st.markdown("### 第 1 步 · 开局签约（模块 A）")
+    st.markdown("**场景**：你是公司财务经理，开工前与团队确定经营目标。设定目标利润率，确定基准售价。")
+    before = compute(st.session_state.state)
+    rate = st.slider("目标利润率（%）", 5, 40, 15, key="s1_rate")
+    price = st.slider("产品售价（元/件）", 200, 1000, int(st.session_state.state["price"]), key="s1_price")
+    if st.button("确认本步（签约定价）"):
+        st.session_state.state["target_rate"] = rate / 100.0
+        st.session_state.state["price"] = float(price)
+        after = compute(st.session_state.state)
+        commit(f"已签约：目标利润率 {rate}%，售价 ¥{price}/件。" + indicator_delta(before, after))
+
+# ---------- 步骤 2 · 采购 ----------
+elif current == 2:
+    st.markdown("### 第 2 步 · 材料采购（模块 A）")
+    st.markdown("**场景**：你是采购员。三家供应商价格/质量/交期不同，选择影响直接材料成本与潜在返工。")
+    before = compute(st.session_state.state)
+    s = st.radio("选择供应商", list(SUPPLIERS.keys()),
+                 help="S1 均衡 · S2 优质但贵 · S3 便宜但质量差")
+    for k, v in SUPPLIERS.items():
+        st.caption(f"**{k}**：¥{v['price']}/kg，质量「{v['quality']}」，{v['tag']}")
+    if st.button("确认本步（确定供应商）"):
+        v = SUPPLIERS[s]
+        st.session_state.state["supplier"] = s
+        st.session_state.state["mat_price"] = v["price"]
+        st.session_state.state["quality"] = v["quality"]
+        after = compute(st.session_state.state)
+        commit(f"已选供应商 {s}（¥{v['price']}/kg，{v['quality']}）。" + indicator_delta(before, after))
+
+# ---------- 步骤 3 · 入库 ----------
+elif current == 3:
+    st.markdown("### 第 3 步 · 材料入库（模块 A）")
+    st.markdown("**场景**：设定本次采购单价与数量，确定直接材料总额。")
+    before = compute(st.session_state.state)
+    mp = st.slider("材料单价（元/kg）", 5.0, 20.0, float(st.session_state.state["mat_price"]), step=0.5, key="s3_mp")
+    mq = st.slider("采购数量（kg）", 1000, 10000, int(st.session_state.state["mat_qty"]), step=100, key="s3_mq")
+    st.caption(f"直接材料总额 = {mp} × {mq} × 质量系数({QUALITY[st.session_state.state['quality']]}) = "
+               f"¥{mp*mq*QUALITY[st.session_state.state['quality']]:,.0f}")
+    if st.button("确认本步（材料入库）"):
+        st.session_state.state["mat_price"] = float(mp)
+        st.session_state.state["mat_qty"] = int(mq)
+        after = compute(st.session_state.state)
+        commit(f"入库：单价¥{mp}/kg × {mq}kg。直接材料 ¥{after['material_total']:,.0f}。" + indicator_delta(before, after))
+
+# ---------- 步骤 4 · 领料 ----------
+elif current == 4:
+    st.markdown("### 第 4 步 · 生产领料（模块 A）")
+    st.markdown("**场景**：投料方式决定在产品材料完工程度，进而影响约当产量与完工/在产成本分配。")
+    before = compute(st.session_state.state)
+    mode = st.radio("选择投料方式", list(TRAIN_MODE.keys()))
+    st.caption("一次投入：在产品材料完工程度 100%；分工序分次投入：约 50%。")
+    if st.button("确认本步（确定投料方式）"):
+        st.session_state.state["material_done"] = TRAIN_MODE[mode]
+        after = compute(st.session_state.state)
+        commit(f"投料方式：{mode}（材料完工程度 {TRAIN_MODE[mode]}）。" + indicator_delta(before, after))
+
+# ---------- 步骤 5 · 人工 ----------
+elif current == 5:
+    st.markdown("### 第 5 步 · 人工投入（模块 A）")
+    st.markdown("**场景**：设定本月工时与工资率，直接人工 = 工时 × 工资率。")
+    before = compute(st.session_state.state)
+    h = st.slider("工时（h）", 1000, 6000, int(st.session_state.state["labor_hours"]), step=100, key="s5_h")
+    w = st.slider("工资率（元/h）", 15, 35, int(st.session_state.state["wage"]), key="s5_w")
+    st.caption(f"直接人工 = {h} × {w} = ¥{h*w:,.0f}")
+    if st.button("确认本步（确定人工成本）"):
+        st.session_state.state["labor_hours"] = int(h)
+        st.session_state.state["wage"] = float(w)
+        after = compute(st.session_state.state)
+        commit(f"直接人工 ¥{after['labor_total']:,.0f}（{h}h × ¥{w}）。" + indicator_delta(before, after))
+
+# ---------- 步骤 6 · 制造费用 ----------
+elif current == 6:
+    st.markdown("### 第 6 步 · 制造费用（模块 A）")
+    st.markdown("**场景**：选择制造费用分摊基数并设定总额，制造费用计入加工成本。")
+    before = compute(st.session_state.state)
+    base = st.radio("分摊基数", ["人工工时", "机器工时", "产量"])
+    mfg = st.slider("制造费用总额（元）", 20000, 120000, int(st.session_state.state["mfg_total"]), step=1000, key="s6_mfg")
+    if st.button("确认本步（确定制造费用）"):
+        st.session_state.state["mfg_base"] = base
+        st.session_state.state["mfg_total"] = float(mfg)
+        after = compute(st.session_state.state)
+        commit(f"制造费用 ¥{mfg:,.0f}，分摊基数：{base}。" + indicator_delta(before, after))
+
+# ---------- 步骤 7 · 约当产量 ----------
+elif current == 7:
+    st.markdown("### 第 7 步 · 约当产量（模块 A）")
+    st.markdown("**场景**：设定完工/在产品数量与加工完工程度，计算材料/加工约当产量。")
+    before = compute(st.session_state.state)
+    fin = st.slider("完工产品数量", 0, 600, int(st.session_state.state["finished"]), step=10, key="s7_fin")
+    wipn = st.slider("月末在产品数量", 0, 400, int(st.session_state.state["wip"]), step=10, key="s7_wip")
+    pdone = st.slider("加工完工程度（%）", 0, 100, int(st.session_state.state["proc_done"] * 100), key="s7_pd")
+    st.caption(f"材料完工程度 {st.session_state.state['material_done']}；加工约当 = {wipn} × {pdone}%")
+    if st.button("确认本步（确定产量与完工程度）"):
+        st.session_state.state["finished"] = int(fin)
+        st.session_state.state["wip"] = int(wipn)
+        st.session_state.state["proc_done"] = pdone / 100.0
+        after = compute(st.session_state.state)
+        commit(f"完工 {fin} 件、在产品 {wipn} 件，加工完工程度 {pdone}%。" + indicator_delta(before, after))
+
+# ---------- 步骤 8 · 品种法 ----------
+elif current == 8:
+    st.markdown("### 第 8 步 · 品种法核算（模块 A）")
+    st.markdown("**场景**：归集要素费用，用约当产量法计算完工产品与月末在产品成本。")
+    rows = pd.DataFrame({
+        "项目": ["直接材料总额", "直接人工", "制造费用", "材料约当产量", "加工约当产量",
+                "材料单位成本", "加工单位成本", "单位产品成本", "完工产品成本", "月末在产品成本"],
+        "金额/数量": [f"¥{r['material_total']:,.0f}", f"¥{r['labor_total']:,.0f}",
+                  f"¥{r['processing_total']-r['labor_total']:,.0f}",
+                  f"{r['mat_eq']:.0f}", f"{r['proc_eq']:.0f}",
+                  f"¥{r['mat_unit']:.2f}", f"¥{r['proc_unit']:.2f}",
+                  f"¥{r['unit_cost']:.2f}", f"¥{r['finished_cost']:,.2f}", f"¥{r['wip_cost']:,.2f}"],
     })
-    st.dataframe(chk, width="stretch", hide_index=True)
-    st.markdown("△ = 视频 + PPT 为待做项（方案已规划）。工程可行性：**11.5 人日 / 2 人 6 天**，人日估算与优先级见方案 7.1 节。")
+    st.dataframe(rows, width="stretch", hide_index=True)
+    st.caption(f"成本合计 ¥{r['total_cost']:,.0f} 与要素费用合计一致：{r['total_cost'] - (r['material_total']+r['processing_total']) < 0.01}")
+    if st.button("确认本步（完成品种法核算）"):
+        commit(f"单位产品成本 ¥{r['unit_cost']:.2f}，完工成本 ¥{r['finished_cost']:,.0f}，在产品 ¥{r['wip_cost']:,.0f}。")
 
-# ============================================================
-# 板块 8 · 参考文献与附录
-# ============================================================
-elif page == PAGES[7]:
-    st.title("参考文献")
-    refs = [
-        "[1] 孙茂竹, 张敏. 成本与管理会计（第4版·立体化数字教材版）[M]. 北京: 中国人民大学出版社, 2024.",
-        "[2] 财政部. 管理会计基本指引（财会〔2016〕10 号）[Z]. 2016.",
-        "[3] 财政部. 管理会计应用指引第 300-304 号：成本管理[Z]. 2017.",
-        "[4] 中国仿真学会. 2026 中国仿真创新应用大赛·虚拟仿真实验设计方向竞赛方案[EB/OL]. http://www.siac.net.cn, 2026.",
-        "[5] 国家虚拟仿真实验教学项目共享服务平台（实验空间）[R]. https://www.ilab-x.com.",
-        "[6] 西南财经大学天府学院. 成本管理会计 ACT1415A 教学大纲（2026 春）[Z]. 2026.",
-    ]
-    for r in refs:
-        st.markdown(f"- {r}")
+# ---------- 步骤 9 · 量本利 ----------
+elif current == 9:
+    st.markdown("### 第 9 步 · 量本利分析（模块 B）")
+    st.markdown("**场景**：调整售价与销量，测算保本点与经营利润（量本利决策）。")
+    before = compute(st.session_state.state)
+    price = st.slider("售价（元/件）", 200, 1000, int(st.session_state.state["price"]), key="s9_price")
+    sales = st.slider("销量（件）", 100, 600, int(st.session_state.state["finished"]), step=10, key="s9_sales")
+    vc = st.session_state.state["standard_cost"]
+    bep = price - vc
+    st.caption(f"贡献毛益 ≈ ¥{bep:.0f}/件；保本销量 ≈ {('%.0f' % (r['processing_total']/bep)) if bep>0 else '—'} 件")
+    if st.button("确认本步（完成量本利决策）"):
+        st.session_state.state["price"] = float(price)
+        st.session_state.state["finished"] = int(sales)
+        after = compute(st.session_state.state)
+        commit(f"售价 ¥{price}/件、销量 {sales} 件。经营利润 ¥{after['profit']:,.0f}。" + indicator_delta(before, after))
 
-    with st.expander("附录：参数校准记录"):
-        cal = pd.DataFrame({
-            "问题": ["产品售价", "材料单价", "绩效分公式"],
-            "原值": ["200 元", "12 元", "低于95%判异常却满分"],
-            "修正值": ["600 元", "保留 12 元", "低于95%扣分"],
-            "原因": ["原值导致所有场景利润为负，学生无决策空间", "与售价匹配，默认场景落在绿色区间", "与「偷工减料」判定自洽"],
-        })
-        st.dataframe(cal, width="stretch", hide_index=True)
+# ---------- 步骤 10 · 产销情境 ----------
+elif current == 10:
+    st.markdown("### 第 10 步 · 产销情境（模块 B）")
+    st.markdown("**场景**：不同产销情境下，固定制造费用是否被存货吸收，导致利润差异。")
+    before = compute(st.session_state.state)
+    sc = st.radio("选择产销情境", ["产销平衡", "存货增加（产量>销量）", "销售下滑（产量不变）"])
+    if st.button("确认本步（确定产销情境）"):
+        st.session_state.state["scenario"] = sc
+        adj = {"产销平衡": 0.0, "存货增加（产量>销量）": 0.08, "销售下滑（产量不变）": -0.12}[sc]
+        st.session_state.state["standard_cost"] = max(200, st.session_state.state["standard_cost"] * (1 + adj))
+        after = compute(st.session_state.state)
+        commit(f"情境：{sc}。固定成本被存货吸收情况变化，偏离指数变动。" + indicator_delta(before, after))
 
-    with st.expander("作品介绍（≤300 字）"):
-        st.markdown(
-            "本作品面向应用型本科会计学《成本管理会计》课程，针对「方法抽象、数据割裂、核算与决策脱节」痛点，"
-            "构建参数化制造工厂虚拟仿真实验。学生以成本会计、车间核算员、财务经理、管理会计师身份，沉浸式完成材料采购、"
-            "费用归集、品种法/分批法/分步法核算、变动与完全成本法对比、标准成本差异诊断、作业成本分摊及责任中心考核。"
-            "系统以「单位成本—经营利润—成本偏离指数—责任绩效」为主指标，每步可量化；内置卡片式决策、滑块参数、同口径复盘、"
-            "风险事件与红线机制；AI 仅做方案评判与提分建议。作品对接超星等 LMS，形成「课前预热—课中实训—课后复盘」闭环，"
-            "培养懂数据、会核算、能决策的数智化管理会计人才。"
-        )
+# ---------- 步骤 11 · 标准成本 ----------
+elif current == 11:
+    st.markdown("### 第 11 步 · 标准成本（模块 B）")
+    st.markdown("**场景**：设定标准料工费，作为成本偏离指数与责任绩效分的基准。")
+    before = compute(st.session_state.state)
+    std = st.slider("标准成本（元/件）", 200, 800, int(st.session_state.state["standard_cost"]), key="s11_std")
+    if st.button("确认本步（确定标准成本）"):
+        st.session_state.state["standard_cost"] = float(std)
+        after = compute(st.session_state.state)
+        commit(f"标准成本 ¥{std}/件。成本偏离指数 {after['deviation']:.1f}%（{deviation_color(after['deviation'])}）。"
+               + indicator_delta(before, after))
 
-st.sidebar.markdown("---")
-st.sidebar.caption("Streamlit 演示版 · 核心算账引擎已按方案 3.3 节实装并验证")
+# ---------- 步骤 12 · 责任中心 ----------
+elif current == 12:
+    st.markdown("### 第 12 步 · 责任中心（模块 B）")
+    st.markdown("**场景**：划分成本中心/利润中心并落实责任，决定责任绩效分。")
+    before = compute(st.session_state.state)
+    rs = st.radio("责任划分方式", ["合理划分到责任中心", "部分合理部分模糊", "全部推给他人"])
+    if st.button("确认本步（划分责任中心）"):
+        st.session_state.state["responsibility"] = rs
+        penalty = {"合理划分到责任中心": 0.0, "部分合理部分模糊": 5.0, "全部推给他人": 20.0}[rs]
+        base = compute(st.session_state.state)["perf"]
+        st.session_state.state["resp_penalty"] = penalty
+        st.session_state.state["perf_adj"] = base - penalty
+        commit(f"责任划分：{rs}（责任绩效扣减 {penalty:.0f} 分）。当前绩效约 {base-penalty:.0f} 分。")
+
+# ---------- 步骤 13 · 金点子 ----------
+elif current == 13:
+    st.markdown("### 第 13 步 · 降本金点子（模块 C）")
+    st.markdown("**场景**：为提升竞争力提交降本增效方案，系统从创新性/可操作性/成本影响/业财融合四维评分。")
+    text = st.text_area("输入你的降本增效方案（如：改用优质料降低返工率、优化排产减少工时……）",
+                        value=st.session_state.state["suggestion"], height=120)
+    if st.button("提交方案并评分"):
+        st.session_state.state["suggestion"] = text
+        keywords = ["降本", "返工", "排产", "工时", "供应链", "质检", "采购", "产能", "存货", "定价"]
+        hit = sum(1 for k in keywords if k in text)
+        creativity = min(100, 40 + hit * 6)
+        operability = min(100, 40 + len(text) // 6)
+        cost_impact = min(100, 30 + hit * 7)
+        business = min(100, 30 + hit * 6)
+        score = 0.30 * creativity + 0.30 * operability + 0.25 * cost_impact + 0.15 * business
+        st.session_state.state["idea_score"] = round(score, 1)
+        commit(f"方案评分 {score:.1f}/100（创新{creativity:.0f}·可操作{operability:.0f}·成本影响{cost_impact:.0f}·业财融合{business:.0f}）。")
+
+# ---------- 步骤 14 · 风险事件 ----------
+elif current == 14:
+    st.markdown("### 第 14 步 · 风险事件（模块 C）")
+    st.markdown("**场景**：经营中随机触发风险事件，你需在约束条件下做出应对决策。")
+    if "cur_risk" not in st.session_state:
+        st.session_state.cur_risk = random.choice([
+            ("原材料涨价 20%", "接受涨价并微调售价 / 更换更低价料 / 增加采购量锁价"),
+            ("紧急订单插单", "接单加班（增成本） / 拒绝保主单 / 调整排产"),
+            ("设备突发故障", "停机检修（产能-30%） / 外协加工 / 加班补产"),
+            ("质检发现批量不合格", "返工整改 / 报废重做 / 降价处理"),
+            ("客户要求降价 10%", "接受降价降本 / 拒绝维持毛利 / 协商折中"),
+        ])
+    risk, opts = st.session_state.cur_risk
+    parts = [p.strip() for p in opts.split(" / ") if p.strip()]
+    st.error(f"⚠️ 风险事件：{risk}")
+    choice = st.radio("你的应对决策", parts)
+    loss_map = {parts[0]: 1.0}
+    if len(parts) >= 2:
+        loss_map[parts[1]] = 0.5
+    if len(parts) >= 3:
+        loss_map[parts[2]] = 0.2
+    if st.button("确认应对决策"):
+        st.session_state.state["risk"] = risk
+        st.session_state.state["risk_loss"] = loss_map.get(choice, 0.5)
+        st.session_state.state["events"].append(risk)
+        commit(f"应对「{risk}」选择：{choice}。风险损失影响约 {st.session_state.state['risk_loss']}。")
+
+# ---------- 步骤 15 · 红线检查 ----------
+elif current == 15:
+    st.markdown("### 第 15 步 · 红线检查（模块 C）")
+    st.markdown("**场景**：系统检测三类红线。首次触发警告并扣分，第二次直接终止实验。")
+    s = st.session_state.state
+    checks = []
+    if s["mat_price"] > 20:
+        checks.append("成本造假（材料单价>20元）")
+    if s["wip"] > s["finished"] * 2:
+        checks.append("虚增存货（在产品>完工×2）")
+    if s.get("responsibility") == "全部推给他人":
+        checks.append("责任甩锅（责任全推他人）")
+    if checks:
+        st.warning("检测到红线：" + "；".join(checks))
+    else:
+        st.success("未触发任何红线，核算规范。")
+    if st.button("确认检查结果（提交判定）"):
+        for c in checks:
+            key = c.split("（")[0]
+            if key in s["redlines"]:
+                s["redlines"][key] += 1
+        commit("红线检查完成。" + ("触发：" + "；".join(checks) if checks else "无红线，合规。"))
+
+# ---------- 步骤 16 · 经营决策 ----------
+elif current == 16:
+    st.markdown("### 第 16 步 · 经营决策（模块 C · 终结）")
+    st.markdown("**场景**：综合全部分析，出具定价 / 排产 / 考核建议书，并给出终结性评分。")
+    s = st.session_state.state
+    rr = compute(s)
+    perf = rr["perf"] - s.get("perf_adj", 0)
+    risk_ded = s.get("risk_loss", 0.0) * 6
+    idea = s.get("idea_score") or 0
+    red_ded = sum(s["redlines"].values()) * 30
+    final = max(0, round(0.5 * perf + 0.3 * idea + 0.2 * (100 - risk_ded) - red_ded, 1))
+    st.markdown(f"""
+**经营决策建议书**
+- **定价**：单位成本 ¥{rr['unit_cost']:.2f}，售价 ¥{s['price']:.0f}/件，毛利 ¥{s['price']-rr['unit_cost']:.2f}/件
+- **排产**：完工 {s['finished']} 件 / 在产 {s['wip']} 件，成本偏离 {rr['deviation']:.1f}%（{deviation_color(rr['deviation'])}）
+- **考核**：责任绩效 {perf:.0f} 分；降本方案 {idea:.0f} 分；风险损失扣 {risk_ded:.0f}；红线扣 {red_ded:.0f}
+""")
+    st.metric("终结性评分", f"{final} / 100")
+    if st.button("完成实训（生成成绩）"):
+        st.session_state.finished = True
+        commit(f"实训完成！终结性评分 {final}/100。")
+
+# ---------- 完成页 ----------
+if st.session_state.finished and current > TOTAL_STEPS:
+    st.success("🎉 恭喜完成全部 16 步虚拟仿真实训！")
+    s = st.session_state.state
+    rr = compute(s)
+    st.markdown("#### 实训复盘")
+    notes = s["notes"]
+    df = pd.DataFrame({
+        "步骤": list(notes.keys()),
+        "记录": [str(v) for v in notes.values()],
+    })
+    st.dataframe(df, width="stretch", hide_index=True)
+    st.caption(f"四指标终态：单位成本 ¥{rr['unit_cost']:.2f} · 经营利润 ¥{rr['profit']:,.0f} · "
+               f"成本偏离 {rr['deviation']:.1f}% · 责任绩效 {rr['perf']:.0f}")
