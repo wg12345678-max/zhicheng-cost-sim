@@ -38,7 +38,9 @@ streamlit run app.py
 
 ## 在线访问
 
-部署到 Streamlit Community Cloud 后，访问 `https://<app>.streamlit.app`。
+已部署到 Streamlit Community Cloud，在线访问：
+
+**https://zhicheng-njmxpg3vhgdthkrujdx95x.streamlit.app**
 
 ---
 西南财经大学天府学院《成本管理会计 ACT1415A》课程组 · 2026
