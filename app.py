@@ -11,7 +11,7 @@ import numpy as np
 import plotly.graph_objects as go
 import facade  # streamlit-facade：shadcn 风格、可主题化组件库（V6.0 引入）
 
-APP_VERSION = "V6.1"  # 版本号：每次升级在此递增，并同步界面与提交信息
+APP_VERSION = "V6.2"  # 版本号：每次升级在此递增，并同步界面与提交信息
 
 st.set_page_config(page_title="智控成本·数创价值", page_icon="◈", layout="wide",
                    initial_sidebar_state="expanded")
@@ -100,6 +100,22 @@ st.markdown("""
   @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.25} }
   .cover-card { border:1px solid #00FF9C44; border-radius:12px; background:rgba(7,11,15,.85);
                 padding:14px 18px; margin-bottom:10px; box-shadow:0 0 24px rgba(0,255,156,.12); }
+  /* ===== 侧边栏阶段导航（V6.2） ===== */
+  .nav-phase { border:1px solid #1E3A28; border-radius:10px; padding:8px 10px; margin:6px 0;
+               background:#0A0E12; transition:border-color .3s, box-shadow .3s; }
+  .nav-phase.active { border-color:#00FF9C55; box-shadow:0 0 14px rgba(0,255,156,.10); }
+  .nav-phase-title { font-size:12px; font-weight:700; color:#8FB89B; letter-spacing:.5px;
+                     display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; }
+  .nav-phase.active .nav-phase-title { color:#00FF9C; }
+  .nav-phase-title .cnt { color:#4E7A63; font-weight:500; font-size:11px; }
+  .nav-item { display:flex; align-items:center; gap:7px; font-size:12px; color:#5F7A6B;
+              padding:3px 6px; border-radius:6px; border-left:3px solid transparent; }
+  .nav-item.done { color:#8FB89B; }
+  .nav-item.done .mk { color:#00FF9C; }
+  .nav-item.now { color:#E6F2E9; background:#00FF9C14; border-left-color:#00FF9C; font-weight:700; }
+  .nav-item .mk { width:13px; text-align:center; color:#4E7A63; flex:none; }
+  .nav-item .nm { flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .nav-item .n { color:#3A5A44; font-size:10px; margin-right:5px; font-family:Consolas,monospace; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -284,28 +300,31 @@ if not st.session_state.finished and cur <= TOTAL:
     who, say = DIARY[cur]
     diary_line(who, say)
 
-# ---------------- 侧边栏：阶段导航 ----------------
+# ---------------- 侧边栏：指挥中心阶段导航（V6.2 组件式） ----------------
 with st.sidebar:
-    st.markdown("### 指挥中心导航")
+    st.markdown("### ◈ 指挥中心导航")
     _prog = len(st.session_state.done) / TOTAL
     facade.Progress(value=int(round(_prog * 100)), label=f"完成 {len(st.session_state.done)} / {TOTAL} 步")
-    st.caption("A 情境与参数设定（1-4）· B 自主设计与决策（5-21）· C 风险与博弈（22-25）· D 产出与复盘（26-28）")
-    st.markdown("#### A · 情境与参数设定")
-    for n in range(1, 5):
-        tag = "✔" if n in st.session_state.done else ("▸" if n == cur else "·")
-        st.markdown(f"{tag} 第{n}天·{DIARY[n][0]}")
-    st.markdown("#### B · 自主设计与决策")
-    for n in range(5, 22):
-        tag = "✔" if n in st.session_state.done else ("▸" if n == cur else "·")
-        st.markdown(f"{tag} 第{n}天·{DIARY[n][0]}")
-    st.markdown("#### C · 风险与博弈")
-    for n in range(22, 26):
-        tag = "✔" if n in st.session_state.done else ("▸" if n == cur else "·")
-        st.markdown(f"{tag} 第{n}天·{DIARY[n][0]}")
-    st.markdown("#### D · 产出与复盘")
-    for n in range(26, 29):
-        tag = "✔" if n in st.session_state.done else ("▸" if n == cur else "·")
-        st.markdown(f"{tag} 第{n}天·{DIARY[n][0]}")
+    _phases = [("A · 情境与参数", 1, 4), ("B · 自主设计与决策", 5, 21),
+               ("C · 风险与博弈", 22, 25), ("D · 产出与复盘", 26, 28)]
+    _nav_html = []
+    for _pt, _a, _b in _phases:
+        _act = _a <= cur <= _b
+        _cnt = sum(1 for _nn in range(_a, _b + 1) if _nn in st.session_state.done)
+        _nav_html.append(f'<div class="nav-phase{" active" if _act else ""}">'
+                         f'<div class="nav-phase-title">{_pt}'
+                         f'<span class="cnt">{_cnt}/{_b - _a + 1}</span></div>')
+        for _nn in range(_a, _b + 1):
+            if _nn in st.session_state.done:
+                _cls, _mk = "done", "✔"
+            elif _nn == cur:
+                _cls, _mk = "now", "▸"
+            else:
+                _cls, _mk = "", "·"
+            _nav_html.append(f'<div class="nav-item {_cls}"><span class="mk">{_mk}</span>'
+                             f'<span class="nm"><span class="n">{_nn:02d}</span>{DIARY[_nn][0]}</span></div>')
+        _nav_html.append("</div>")
+    st.markdown("".join(_nav_html), unsafe_allow_html=True)
     if cur > 1 and not st.session_state.finished:
         if facade.Button("⬅ 返回上一步", icon="arrow-left", key="nav_back"):
             st.session_state.step = max(1, cur - 1)
