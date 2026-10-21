@@ -1,37 +1,71 @@
 # -*- coding: utf-8 -*-
 """
 智控成本 · 数创价值 —— 制造企业全流程成本管理虚拟仿真实训（Streamlit 交互版）
-28 步创始人日记体 × 智能成本控制指挥中心 UI
+28 步创始人日记体 × 智能成本控制指挥中心 UI  ·  V6.0
+V6.0：集成 streamlit-facade 主题化（霓虹绿深色设计系统）+ Design Tokens + 顶栏徽章 + 底部 28 步进度带
 依据《智控成本数创价值·设计方案 V5.0》构建；2026 中国仿真创新应用大赛·仿真教学应用赛道
 """
 import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+import facade  # streamlit-facade：shadcn 风格、可主题化组件库（V6.0 引入）
+
+APP_VERSION = "V6.0"  # 版本号：每次升级在此递增，并同步界面与提交信息
 
 st.set_page_config(page_title="智控成本·数创价值", page_icon="◈", layout="wide",
                    initial_sidebar_state="expanded")
 
-# ---------------- 指挥中心主题 CSS ----------------
+# ---------------- V6.0：facade 全局主题（霓虹绿深色指挥中心） ----------------
+facade.theme.apply(preset="carbon-dark", base="dark",
+                   primary="#00FF9C", primary_foreground="#05070A",
+                   background="#05070A", foreground="#E6F2E9",
+                   muted="#0A0E12", muted_foreground="#8FB89B",
+                   border="#1E3A28", destructive="#FF3B30",
+                   chrome_background="#070B0F", chrome_foreground="#E6F2E9",
+                   chrome_border="#00FF9C33",
+                   radius="md", font_sans="Microsoft YaHei, PingFang SC, sans-serif")
+
+# ---------------- 指挥中心主题 CSS（Design Tokens 单一来源） ----------------
 st.markdown("""
 <style>
-  .stApp { background: #05070A; color: #E6F2E9; }
+  :root {
+    --bg-deep:#05070A; --bg-panel:#0A0E12; --bg-elev:#10161A;
+    --neon:#00FF9C; --accent:#38BDF8; --warn:#FFB300; --alert:#FF3B30;
+    --text:#E6F2E9; --text-dim:#8FB89B; --line:#00FF9C33; --grid:#00FF9C0A;
+    --radius:10px;
+  }
+  .stApp { background: var(--bg-deep); color: var(--text); }
+  /* 指挥中心网格底纹 */
+  .stApp { background-image: linear-gradient(var(--grid) 1px, transparent 1px),
+                             linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+            background-size: 28px 28px; }
   html, body, [class*="css"] { font-family: "Microsoft YaHei", "PingFang SC", sans-serif; }
-  .cmd-header { background: linear-gradient(180deg,#0A0E12,#05070A); border:1px solid #00FF9C33;
-                border-radius:10px; padding:14px 20px; margin-bottom:6px;
+  .cmd-header { background: linear-gradient(180deg,var(--bg-panel),var(--bg-deep));
+                border:1px solid var(--line); border-radius:var(--radius);
+                padding:14px 20px; margin-bottom:6px;
                 box-shadow:0 0 18px #00FF9C22 inset; }
-  .cmd-title { font-size:26px; font-weight:900; color:#00FF9C; letter-spacing:2px; }
-  .cmd-sub { font-size:13px; color:#8FB89B; margin-top:2px; }
-  .metric-neon { background:#0A0E12; border:1px solid #00FF9C33; border-radius:8px;
-                 padding:10px 14px; }
-  .metric-neon .l { color:#8FB89B; font-size:12px; }
-  .metric-neon .v { color:#00FF9C; font-size:22px; font-weight:800; }
-  .diary-line { border-left:3px solid #FFB300; background:#0A0E12; padding:10px 14px;
+  .cmd-title { font-size:26px; font-weight:900; color:var(--neon); letter-spacing:2px; }
+  .cmd-sub { font-size:13px; color:var(--text-dim); margin-top:2px; }
+  .diary-line { border-left:3px solid var(--warn); background:var(--bg-panel); padding:10px 14px;
                 border-radius:0 8px 8px 0; margin:8px 0; }
-  .diary-line .who { color:#FFB300; font-weight:700; }
-  .diary-line .say { color:#E6F2E9; }
-  .ok { color:#00FF9C; } .warn { color:#FFB300; } .bad { color:#FF3B30; }
-  div[data-testid="stSidebar"] { background:#070B0F; border-right:1px solid #00FF9C22; }
+  .diary-line .who { color:var(--warn); font-weight:700; }
+  .diary-line .say { color:var(--text); }
+  .ok { color:var(--neon); } .warn { color:var(--warn); } .bad { color:var(--alert); }
+  /* 底部 28 步进度带 */
+  .stepband { display:flex; gap:4px; flex-wrap:wrap; margin:12px 0 4px;
+              border:1px solid var(--line); border-radius:8px; background:var(--bg-panel);
+              padding:8px 12px; align-items:center; }
+  .stepband .seg { width:16px; height:10px; border-radius:2px; background:#1E3A28;
+                   border:1px solid #3A5A44; }
+  .stepband .seg.done { background:var(--neon); border-color:var(--neon); }
+  .stepband .seg.now { background:var(--neon); border-color:var(--neon);
+                       animation:pulse 1.2s infinite; }
+  .stepband .cap { font-size:11px; color:var(--text-dim); margin-left:6px; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
+  /* 表格统一深色 */
+  [data-testid="stTable"], [data-testid="stDataFrame"] { background:var(--bg-panel); }
+  div[data-testid="stSidebar"] { background:#070B0F; border-right:1px solid var(--line); }
 </style>
 """, unsafe_allow_html=True)
 
@@ -155,20 +189,41 @@ def diary_line(who, say):
 # ---------------- 顶部指挥中心头部 ----------------
 r = compute(s)
 _head_name = DIARY.get(st.session_state.step, ("实训完成", ""))[0]
+_mode = s.get("mode", "实训中")
+_mode_v = "正式" if _mode == "正式" else ("练习" if _mode == "练习" else "实训中")
 st.markdown(f"""
 <div class="cmd-header">
-  <div class="cmd-title">◈ 智能成本控制指挥中心</div>
+  <div class="cmd-title">◈ 智能成本控制指挥中心
+    <span class="cmd-ver">V{APP_VERSION}</span></div>
   <div class="cmd-sub">智控成本 · 数创价值 ｜ 创始人日记体 × {TOTAL} 步全流程成本管理虚拟仿真
      ｜ 当前：第 {st.session_state.step} 天 · {_head_name}</div>
 </div>
 """, unsafe_allow_html=True)
 
-# 四指标霓虹卡片
-c1, c2, c3, c4 = st.columns(4)
-c1.markdown(f'<div class="metric-neon"><div class="l">单位产品成本</div><div class="v">¥{r["unit_cost"]:.2f}</div></div>', unsafe_allow_html=True)
-c2.markdown(f'<div class="metric-neon"><div class="l">经营利润</div><div class="v">¥{r["profit"]:,.0f}</div></div>', unsafe_allow_html=True)
-c3.markdown(f'<div class="metric-neon"><div class="l">成本偏离指数</div><div class="v">{r["deviation"]:.1f}% · {dev_color(r["deviation"])}</div></div>', unsafe_allow_html=True)
-c4.markdown(f'<div class="metric-neon"><div class="l">责任绩效分</div><div class="v">{max(0.0, r["perf"] - s["resp_penalty"]):.0f} / 100</div></div>', unsafe_allow_html=True)
+# 顶栏徽章：实训模式 + 学生身份（V6.0 facade.Badge）
+_mc = "正式" if _mode == "正式" else ("练习" if _mode == "练习" else "实训中")
+_stu = st.session_state.student or {}
+hb1, hb2 = st.columns([1, 2])
+with hb1:
+    if _mode == "正式":
+        facade.Badge(f"模式 · {_mc}", bg_color="#00FF9C22", text_color="#00FF9C")
+    elif _mode == "练习":
+        facade.Badge(f"模式 · {_mc}", bg_color="#FFB30022", text_color="#FFB300")
+    else:
+        facade.Badge(f"模式 · {_mc}")
+with hb2:
+    facade.Badge(f"学生 · {_stu.get('姓名','—')}（{_stu.get('学号','—')} · {_stu.get('班级','—')}）")
+
+# 四指标霓虹卡片（V6.0 facade.Metric）
+m1, m2, m3, m4 = st.columns(4)
+with m1:
+    facade.Metric("单位产品成本", f"¥{r['unit_cost']:.2f}")
+with m2:
+    facade.Metric("经营利润", f"¥{r['profit']:,.0f}")
+with m3:
+    facade.Metric("成本偏离指数", f"{r['deviation']:.1f}%", delta=dev_color(r["deviation"]))
+with m4:
+    facade.Metric("责任绩效分", f"{max(0.0, r['perf'] - s['resp_penalty']):.0f} / 100")
 
 cur = st.session_state.step
 if not st.session_state.finished and cur <= TOTAL:
@@ -178,8 +233,8 @@ if not st.session_state.finished and cur <= TOTAL:
 # ---------------- 侧边栏：阶段导航 ----------------
 with st.sidebar:
     st.markdown("### 指挥中心导航")
-    prog = len(st.session_state.done) / TOTAL
-    st.progress(prog, text=f"完成 {len(st.session_state.done)} / {TOTAL} 步")
+    _prog = len(st.session_state.done) / TOTAL
+    facade.Progress(value=int(round(_prog * 100)), label=f"完成 {len(st.session_state.done)} / {TOTAL} 步")
     st.caption("A 情境与参数设定（1-4）· B 自主设计与决策（5-21）· C 风险与博弈（22-25）· D 产出与复盘（26-28）")
     st.markdown("#### A · 情境与参数设定")
     for n in range(1, 5):
@@ -197,9 +252,11 @@ with st.sidebar:
     for n in range(26, 29):
         tag = "✔" if n in st.session_state.done else ("▸" if n == cur else "·")
         st.markdown(f"{tag} 第{n}天·{DIARY[n][0]}")
-    if cur > 1 and not st.session_state.finished and st.button("⬅ 返回上一步"):
-        st.session_state.step = max(1, cur - 1)
-        st.rerun()
+    if cur > 1 and not st.session_state.finished:
+        if facade.Button("⬅ 返回上一步", icon="arrow-left", key="nav_back"):
+            st.session_state.step = max(1, cur - 1)
+            st.rerun()
+    st.caption(f"版本 V{APP_VERSION} · facade 主题")
 
 # ---------------- 步骤分支 ----------------
 # ===== A 情境与参数设定（1-4） =====
@@ -208,7 +265,7 @@ if cur == 1:
     role = st.radio("初始角色（将随流程进阶）", ["成本会计", "车间核算员", "财务经理", "管理会计师"])
     cap = st.slider("初始资金（元）", 50000, 500000, 200000, step=10000)
     target = st.slider("目标经营利润（元）", 20000, 120000, 60000, step=5000)
-    if st.button("确认 · 拍板签约"):
+    if facade.Button("确认 · 拍板签约", icon="save", key="k1"):
         s["role"] = role; s["target_profit"] = target
         commit(f"签约：以{role}身份起步，初始资金 ¥{cap:,.0f}，目标利润 ¥{target:,.0f}。")
 
@@ -525,9 +582,20 @@ elif cur == 28:
     s["price"] = price
     after = compute(s)
     st.caption(f"定价 ¥{price}/件，单位成本 ¥{after['unit_cost']:.2f}，毛利 ¥{price-after['unit_cost']:.2f}/件，经营利润 ¥{after['profit']:,.0f}。")
-    if st.button("完成实训 · 提交路演"):
+    if facade.Button("完成实训 · 提交路演", icon="send", key="k28"):
         st.session_state.finished = True
         commit(f"经营决策：定价 ¥{price}，{plan}，路演「{pitch[:40]}…」")
+
+# ---------------- 底部 28 步进度带（V6.0；替代已删顶部网格，侧边导航保留） ----------------
+if not st.session_state.finished:
+    _segs = []
+    for _n in range(1, TOTAL + 1):
+        _cls = "seg done" if _n in st.session_state.done else ("seg now" if _n == cur else "seg")
+        _segs.append(f'<span class="{_cls}" title="第{_n}天"></span>')
+    st.markdown(
+        f'<div class="stepband">{"".join(_segs)}'
+        f'<span class="cap">完成 {len(st.session_state.done)} / {TOTAL} 步 ｜ 实心=完成 · 脉冲=当前 · 空心=未开始</span></div>',
+        unsafe_allow_html=True)
 
 # ================= 完成页：个人实验报告 =================
 if st.session_state.finished:
@@ -559,7 +627,7 @@ if st.session_state.finished:
     st.table(ev)
     st.markdown(f"**综合成绩**：**{weighted:.1f} / 100** 　"
                 f"（老师 {t_score}×50% + 学生互评 {p_score}×20% + 企业专家 {e_score}×30%）")
-    if st.button("重做一轮（重置并重新开始）"):
+    if facade.Button("重做一轮（重置并重新开始）", icon="refresh", key="k_reset"):
         st.session_state.state = default_state()
         st.session_state.step = 1
         st.session_state.done = []
