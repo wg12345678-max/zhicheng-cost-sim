@@ -22,13 +22,6 @@ st.markdown("""
                 box-shadow:0 0 18px #00FF9C22 inset; }
   .cmd-title { font-size:26px; font-weight:900; color:#00FF9C; letter-spacing:2px; }
   .cmd-sub { font-size:13px; color:#8FB89B; margin-top:2px; }
-  .step-grid { display:flex; flex-wrap:wrap; gap:5px; margin-top:10px; }
-  .cell { width:38px; height:26px; border:1px solid #1E3A28; border-radius:4px;
-          display:flex; align-items:center; justify-content:center; font-size:11px; color:#3A5A44; }
-  .cell-done { background:#00FF9C22; border-color:#00FF9C; color:#00FF9C; }
-  .cell-cur  { background:#00FF9C; color:#05070A; font-weight:900;
-               box-shadow:0 0 10px #00FF9C; animation:pulse 1.2s infinite; }
-  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.55} }
   .metric-neon { background:#0A0E12; border:1px solid #00FF9C33; border-radius:8px;
                  padding:10px 14px; }
   .metric-neon .l { color:#8FB89B; font-size:12px; }
@@ -41,6 +34,26 @@ st.markdown("""
   div[data-testid="stSidebar"] { background:#070B0F; border-right:1px solid #00FF9C22; }
 </style>
 """, unsafe_allow_html=True)
+
+# ---------------- 学生登录（学号 / 班级 / 姓名） ----------------
+if "student" not in st.session_state:
+    st.session_state.student = None
+
+if st.session_state.student is None:
+    st.markdown("## ◈ 智控成本 · 数创价值")
+    st.markdown("**制造企业全流程成本管理虚拟仿真实训 · 28 步创始人日记体**\n\n请先登录：填写学号、班级、姓名后进入实训。")
+    with st.form("login_form"):
+        _sid = st.text_input("学号")
+        _cls = st.text_input("班级")
+        _name = st.text_input("姓名")
+        _ok = st.form_submit_button("进入实训")
+    if _ok:
+        if _sid.strip() and _cls.strip() and _name.strip():
+            st.session_state.student = {"学号": _sid.strip(), "班级": _cls.strip(), "姓名": _name.strip()}
+            st.rerun()
+        else:
+            st.error("请完整填写学号、班级、姓名。")
+    st.stop()
 
 # ---------------- 角色/知识/日记表 ----------------
 # 身份进阶（角色层）：成本会计→车间核算员→财务经理→管理会计师（任务驱动声音=创始人/投资人/供应商/质检/客户/监管…）
@@ -147,18 +160,8 @@ st.markdown(f"""
   <div class="cmd-title">◈ 智能成本控制指挥中心</div>
   <div class="cmd-sub">智控成本 · 数创价值 ｜ 创始人日记体 × {TOTAL} 步全流程成本管理虚拟仿真
      ｜ 当前：第 {st.session_state.step} 天 · {_head_name}</div>
-  <div class="step-grid">
+</div>
 """, unsafe_allow_html=True)
-cells = []
-for n in range(1, TOTAL + 1):
-    if n in st.session_state.done:
-        cls = "cell cell-done"
-    elif n == st.session_state.step:
-        cls = "cell cell-cur"
-    else:
-        cls = "cell"
-    cells.append(f'<div class="{cls}">{n}</div>')
-st.markdown("".join(cells) + "</div></div>", unsafe_allow_html=True)
 
 # 四指标霓虹卡片
 c1, c2, c3, c4 = st.columns(4)
@@ -529,13 +532,33 @@ elif cur == 28:
 # ================= 完成页：个人实验报告 =================
 if st.session_state.finished:
     st.markdown("## 🎉 恭喜完成全部 28 步虚拟仿真实训！")
+    _stu = st.session_state.student or {}
+    st.markdown(f"**学生**：{_stu.get('姓名','—')}（学号 {_stu.get('学号','—')} · {_stu.get('班级','—')}）")
     st.markdown("### 个人实验报告（过程记录存档）")
     if s["log"]:
         st.table(pd.DataFrame(s["log"]))
     final_score = max(0.0, min(100.0, r["perf"] + (10 if s["mode"] == "正式" else 0) - s["resp_penalty"]))
     st.markdown(f"**终态四指标**：单位成本 ¥{r['unit_cost']:.2f} · 经营利润 ¥{r['profit']:,.0f} · "
                 f"成本偏离 {r['deviation']:.1f}% · 责任绩效 {r['perf']:.0f}")
-    st.markdown(f"**终结性评分**：{final_score:.1f} / 100")
+    st.markdown(f"**系统终结性评分**（供老师打分参考）：{final_score:.1f} / 100")
+
+    # ---- 三方评价：老师50% + 学生互评20% + 企业专家30% ----
+    st.markdown("### 三方评价 · 综合成绩")
+    st.caption("权重：老师 50% + 学生互评 20% + 企业专家 30%")
+    t_score = st.slider("老师打分（0-100）", 0, 100, int(round(final_score)), key="fin_teacher")
+    p_score = st.slider("学生互评（0-100）", 0, 100, 80, key="fin_peer")
+    e_score = st.slider("企业专家评分（0-100）", 0, 100, 85, key="fin_expert")
+    weighted = 0.5 * t_score + 0.2 * p_score + 0.3 * e_score
+    s["eval"] = dict(teacher=t_score, peer=p_score, expert=e_score, weighted=round(weighted, 1))
+    ev = pd.DataFrame([
+        {"评价方": "老师", "权重": "50%", "得分": t_score},
+        {"评价方": "学生互评", "权重": "20%", "得分": p_score},
+        {"评价方": "企业专家", "权重": "30%", "得分": e_score},
+        {"评价方": "综合成绩", "权重": "100%", "得分": round(weighted, 1)},
+    ])
+    st.table(ev)
+    st.markdown(f"**综合成绩**：**{weighted:.1f} / 100** 　"
+                f"（老师 {t_score}×50% + 学生互评 {p_score}×20% + 企业专家 {e_score}×30%）")
     if st.button("重做一轮（重置并重新开始）"):
         st.session_state.state = default_state()
         st.session_state.step = 1
