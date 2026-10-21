@@ -11,7 +11,7 @@ import numpy as np
 import plotly.graph_objects as go
 import facade  # streamlit-facade：shadcn 风格、可主题化组件库（V6.0 引入）
 
-APP_VERSION = "V6.0"  # 版本号：每次升级在此递增，并同步界面与提交信息
+APP_VERSION = "V6.1"  # 版本号：每次升级在此递增，并同步界面与提交信息
 
 st.set_page_config(page_title="智控成本·数创价值", page_icon="◈", layout="wide",
                    initial_sidebar_state="expanded")
@@ -66,6 +66,40 @@ st.markdown("""
   /* 表格统一深色 */
   [data-testid="stTable"], [data-testid="stDataFrame"] { background:var(--bg-panel); }
   div[data-testid="stSidebar"] { background:#070B0F; border-right:1px solid var(--line); }
+  /* ===== 纯黑指挥中心封面 / 顶栏 HUD ===== */
+  .hud-wrap { position:relative; padding:24px 20px; margin:6px 0 10px; border-radius:14px;
+              background:radial-gradient(120% 120% at 50% 0%, #0A1210 0%, #05070A 55%, #05070A 100%);
+              border:1px solid #00FF9C44; overflow:hidden; }
+  .hud-wrap::before { content:""; position:absolute; inset:0;
+              background:repeating-linear-gradient(180deg, rgba(0,255,156,0.05) 0 1px, transparent 1px 4px);
+              pointer-events:none; }
+  .hud-wrap .scan { position:absolute; left:0; right:0; top:-4px; height:2px;
+              background:linear-gradient(90deg, transparent, #00FF9C, transparent);
+              animation:scanmove 5s linear infinite; opacity:.85; }
+  @keyframes scanmove { 0%,60%{transform:translateY(0)} 80%{transform:translateY(150px)} 100%{transform:translateY(0)} }
+  .hud-wrap .hud-c { position:absolute; width:16px; height:16px; border:2px solid #00FF9C; }
+  .hud-wrap .hud-c.tl { top:9px; left:9px; border-right:none; border-bottom:none; border-top-left-radius:6px; }
+  .hud-wrap .hud-c.tr { top:9px; right:9px; border-left:none; border-bottom:none; border-top-right-radius:6px; }
+  .hud-wrap .hud-c.bl { bottom:9px; left:9px; border-right:none; border-top:none; border-bottom-left-radius:6px; }
+  .hud-wrap .hud-c.br { bottom:9px; right:9px; border-left:none; border-top:none; border-bottom-right-radius:6px; }
+  .hud-inner { position:relative; z-index:1; text-align:center; }
+  .brand-en { font-size:11px; letter-spacing:5px; color:#4E7A63; text-transform:uppercase; }
+  .brand-title { font-size:32px; font-weight:900; color:#00FF9C; letter-spacing:3px;
+                 text-shadow:0 0 14px rgba(0,255,156,.6), 0 0 42px rgba(0,255,156,.22);
+                 margin:4px 0 6px; line-height:1.3; }
+  .brand-title .ver { font-size:12px; letter-spacing:1px; border:1px solid #00FF9C66; border-radius:8px;
+                      padding:1px 8px; vertical-align:middle; color:#8FB89B; text-shadow:none; }
+  .brand-sub { font-size:13px; color:#8FB89B; letter-spacing:1px; }
+  .brand-line { display:inline-flex; align-items:center; gap:10px; margin:10px auto 0;
+                color:#4E7A63; font-size:11px; letter-spacing:1px; }
+  .brand-line::before, .brand-line::after { content:""; width:60px; height:1px;
+                background:linear-gradient(90deg,transparent,#00FF9C55,transparent); }
+  .status-dot { display:inline-block; width:8px; height:8px; border-radius:50%;
+                background:#FF3B30; margin-right:7px; animation:blink 1.6s infinite; }
+  .status-dot.green { background:#00FF9C; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.25} }
+  .cover-card { border:1px solid #00FF9C44; border-radius:12px; background:rgba(7,11,15,.85);
+                padding:14px 18px; margin-bottom:10px; box-shadow:0 0 24px rgba(0,255,156,.12); }
 </style>
 """, unsafe_allow_html=True)
 
@@ -74,8 +108,22 @@ if "student" not in st.session_state:
     st.session_state.student = None
 
 if st.session_state.student is None:
-    st.markdown("## ◈ 智控成本 · 数创价值")
-    st.markdown("**制造企业全流程成本管理虚拟仿真实训 · 28 步创始人日记体**\n\n请先登录：填写学号、班级、姓名后进入实训。")
+    st.markdown("""
+<div class="hud-wrap">
+  <span class="scan"></span>
+  <span class="hud-c tl"></span><span class="hud-c tr"></span>
+  <span class="hud-c bl"></span><span class="hud-c br"></span>
+  <div class="hud-inner">
+    <div class="brand-en">Smart Cost Command Center</div>
+    <div class="brand-title">◈ 智控成本 · 数创价值</div>
+    <div class="brand-sub">制造企业全流程成本管理虚拟仿真实训 · 28 步创始人日记体</div>
+    <div class="brand-line">身份进阶 · 成本会计 → 车间核算员 → 财务经理 → 管理会计师</div>
+  </div>
+</div>
+<div class="cover-card">
+  <span class="status-dot red"></span><span style="color:#8FB89B;font-size:13px;">系统在线 · 请先登录（学号 / 班级 / 姓名）后进入实训</span>
+</div>
+""", unsafe_allow_html=True)
     with st.form("login_form"):
         _sid = st.text_input("学号")
         _cls = st.text_input("班级")
@@ -192,11 +240,17 @@ _head_name = DIARY.get(st.session_state.step, ("实训完成", ""))[0]
 _mode = s.get("mode", "实训中")
 _mode_v = "正式" if _mode == "正式" else ("练习" if _mode == "练习" else "实训中")
 st.markdown(f"""
-<div class="cmd-header">
-  <div class="cmd-title">◈ 智能成本控制指挥中心
-    <span class="cmd-ver">V{APP_VERSION}</span></div>
-  <div class="cmd-sub">智控成本 · 数创价值 ｜ 创始人日记体 × {TOTAL} 步全流程成本管理虚拟仿真
-     ｜ 当前：第 {st.session_state.step} 天 · {_head_name}</div>
+<div class="hud-wrap">
+  <span class="scan"></span>
+  <span class="hud-c tl"></span><span class="hud-c tr"></span>
+  <span class="hud-c bl"></span><span class="hud-c br"></span>
+  <div class="hud-inner">
+    <div class="brand-en">Smart Cost Command Center</div>
+    <div class="brand-title">◈ 智能成本控制指挥中心 <span class="ver">V{APP_VERSION}</span></div>
+    <div class="brand-sub">创始人日记体 × {TOTAL} 步全流程成本管理虚拟仿真
+       ｜ 当前：第 {st.session_state.step} 天 · {_head_name}</div>
+    <div class="brand-line">身份进阶 · 成本会计 → 车间核算员 → 财务经理 → 管理会计师</div>
+  </div>
 </div>
 """, unsafe_allow_html=True)
 
