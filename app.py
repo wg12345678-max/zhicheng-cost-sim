@@ -11,7 +11,7 @@ import numpy as np
 import plotly.graph_objects as go
 import facade  # streamlit-facade：shadcn 风格、可主题化组件库（V6.0 引入）
 
-APP_VERSION = "V6.2"  # 版本号：每次升级在此递增，并同步界面与提交信息
+APP_VERSION = "V6.3"  # 版本号：每次升级在此递增，并同步界面与提交信息
 
 st.set_page_config(page_title="智控成本·数创价值", page_icon="◈", layout="wide",
                    initial_sidebar_state="expanded")
@@ -700,6 +700,28 @@ if st.session_state.finished:
     st.table(ev)
     st.markdown(f"**综合成绩**：**{weighted:.1f} / 100** 　"
                 f"（老师 {t_score}×50% + 学生互评 {p_score}×20% + 企业专家 {e_score}×30%）")
+
+    # ---- 使用意见收集 · 持续改进（V6.3；不占 28 步序号，属 D 复盘延伸，以评促建） ----
+    st.markdown("### 使用意见收集 · 持续改进")
+    st.caption("你的真实反馈将用于本实训的迭代优化与教学改进，助力作品持续打磨。")
+    with st.form("feedback_form"):
+        fb_satis = st.slider("整体满意度", 1, 5, 4, key="fb_satis")
+        fb_diff = st.radio("难度感受", ["过于简单", "合适", "偏难", "很难"], horizontal=True, key="fb_diff")
+        fb_gains = st.multiselect("最有收获的步骤（可多选）",
+                                  [f"第{n}天·{DIARY[n][0]}" for n in range(1, TOTAL + 1)],
+                                  key="fb_gains")
+        fb_ui = st.radio("界面与交互体验", ["很满意", "满意", "一般", "需改进"], horizontal=True, key="fb_ui")
+        fb_rec = st.radio("是否会向同学/同事推荐本实训", ["会", "不确定", "不会"], horizontal=True, key="fb_rec")
+        fb_comment = st.text_area("改进意见 / 建议（哪些环节最想优化？）", "", key="fb_comment")
+        fb_ok = st.form_submit_button("提交反馈")
+    if fb_ok:
+        s["feedback"] = dict(satisfaction=fb_satis, difficulty=fb_diff, gains=fb_gains,
+                             ui=fb_ui, recommend=fb_rec, comment=fb_comment.strip())
+        st.success("✅ 感谢反馈！你的意见已记录，将用于作品持续改进与教学优化。")
+    if s.get("feedback"):
+        st.info(f"本次已提交反馈：满意度 {s['feedback']['satisfaction']}/5 · 难度「{s['feedback']['difficulty']}」"
+                f" · 界面「{s['feedback']['ui']}」")
+
     if facade.Button("重做一轮（重置并重新开始）", icon="refresh", key="k_reset"):
         st.session_state.state = default_state()
         st.session_state.step = 1
